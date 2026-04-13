@@ -2,7 +2,7 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml.ns import qn
-import docx
+from docx.oxml import OxmlElement
 
 doc = Document()
 
@@ -10,18 +10,52 @@ doc = Document()
 section = doc.sections[0]
 section.page_height = Cm(29.7)
 section.page_width  = Cm(21.0)
-section.left_margin   = Cm(2.5)
-section.right_margin  = Cm(1.5)
-section.top_margin    = Cm(2.0)
-section.bottom_margin = Cm(2.0)
+section.left_margin   = Cm(2.5)   # 25 mm
+section.right_margin  = Cm(1.5)   # 15 mm
+section.top_margin    = Cm(2.0)   # 20 mm
+section.bottom_margin = Cm(2.0)   # 20 mm
+# Title page (page 1) — number NOT shown; all others — shown
+section.different_first_page_header_footer = True
+
+# ─── Page numbers in upper-right (non-first pages) ───────────────────────────
+def _add_page_number_field(run):
+    fld1 = OxmlElement('w:fldChar'); fld1.set(qn('w:fldCharType'), 'begin')
+    instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve')
+    instr.text = ' PAGE '
+    fld2 = OxmlElement('w:fldChar'); fld2.set(qn('w:fldCharType'), 'end')
+    run._r.extend([fld1, instr, fld2])
+
+header = section.header
+header.is_linked_to_previous = False
+hp = header.paragraphs[0]
+hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+hp.paragraph_format.space_before = Pt(0)
+hp.paragraph_format.space_after  = Pt(0)
+r = hp.add_run()
+r.font.name = 'Times New Roman'
+r.font.size = Pt(14)
+_add_page_number_field(r)
+# First-page header stays empty → no number on title page
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _set_spacing_15(p):
+    """1.5 line spacing as multiple (360/240 = 1.5)."""
+    pPr = p._p.get_or_add_pPr()
+    old = pPr.find(qn('w:spacing'))
+    if old is not None:
+        pPr.remove(old)
+    sp = OxmlElement('w:spacing')
+    sp.set(qn('w:line'),     '360')   # 1.5 × 240
+    sp.set(qn('w:lineRule'), 'auto')
+    pPr.append(sp)
 
 def set_font(run, bold=False, italic=False, size=14):
-    run.bold = bold
+    run.bold   = bold
     run.italic = italic
     run.font.name = 'Times New Roman'
     run.font.size = Pt(size)
-    r = run._element.get_or_add_rPr()
-    rFonts = r.get_or_add_rFonts()
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.get_or_add_rFonts()
     rFonts.set(qn('w:eastAsia'), 'Times New Roman')
 
 def new_para(doc, align=WD_ALIGN_PARAGRAPH.JUSTIFY, indent=True,
@@ -31,8 +65,8 @@ def new_para(doc, align=WD_ALIGN_PARAGRAPH.JUSTIFY, indent=True,
     pf = p.paragraph_format
     pf.space_before = Pt(space_before)
     pf.space_after  = Pt(space_after)
-    pf.line_spacing = Pt(21)
     pf.first_line_indent = Cm(1.25) if indent else Pt(0)
+    _set_spacing_15(p)
     return p
 
 def add_run(p, text, bold=False, italic=False, size=14):
@@ -42,28 +76,35 @@ def add_run(p, text, bold=False, italic=False, size=14):
 
 def add_page_break(doc):
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
+    p.paragraph_format.space_before     = Pt(0)
+    p.paragraph_format.space_after      = Pt(0)
     p.paragraph_format.first_line_indent = Pt(0)
-    run = p.add_run()
-    run.add_break(WD_BREAK.PAGE)
+    p.add_run().add_break(WD_BREAK.PAGE)
 
 def add_heading(doc, text):
+    """Centered bold heading (ВСТУП, ЗМІСТ, ВИСНОВКИ, РОЗДІЛ …)."""
     p = new_para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, indent=False,
                  space_before=12, space_after=6)
     add_run(p, text, bold=True)
     return p
 
+def add_subheading(doc, text):
+    """Bold left-aligned subsection heading (1.1, 1.2 …)."""
+    p = new_para(doc, align=WD_ALIGN_PARAGRAPH.JUSTIFY, indent=False,
+                 space_before=12, space_after=6)
+    add_run(p, text, bold=True)
+    return p
+
 # =========================================================
-# TITLE PAGE  (page 1)
+# TITLE PAGE  (page 1 — number counted but NOT displayed)
 # =========================================================
 def cp(text, align=WD_ALIGN_PARAGRAPH.CENTER, bold=False, size=14, sb=0, sa=0):
     p = doc.add_paragraph()
     p.alignment = align
-    p.paragraph_format.space_before = Pt(sb)
-    p.paragraph_format.space_after  = Pt(sa)
-    p.paragraph_format.line_spacing = Pt(21)
+    p.paragraph_format.space_before      = Pt(sb)
+    p.paragraph_format.space_after       = Pt(sa)
     p.paragraph_format.first_line_indent = Pt(0)
+    _set_spacing_15(p)
     add_run(p, text, bold=bold, size=size)
 
 cp('Хмельницька гуманітарно-педагогічна академія')
@@ -72,7 +113,8 @@ cp(''); cp(''); cp(''); cp('')
 cp('КУРСОВА РОБОТА', bold=True, size=16, sb=6, sa=6)
 cp('зі спеціальності «Логопедія»')
 cp('на тему:', sb=6, sa=6)
-cp('«Превенція труднощів мовлення в дітей старшого дошкільного віку\nв період екстремально невизначених умов»', bold=True)
+cp('«Превенція труднощів мовлення в дітей старшого дошкільного віку\n'
+   'в період екстремально невизначених умов»', bold=True)
 cp(''); cp(''); cp(''); cp(''); cp('')
 
 for line in [
@@ -87,10 +129,10 @@ for line in [
 ]:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
-    p.paragraph_format.line_spacing = Pt(21)
+    p.paragraph_format.space_before      = Pt(0)
+    p.paragraph_format.space_after       = Pt(0)
     p.paragraph_format.first_line_indent = Pt(0)
+    _set_spacing_15(p)
     add_run(p, line)
 
 cp(''); cp(''); cp(''); cp('')
@@ -99,13 +141,14 @@ cp('Хмельницький – 2025 рік')
 add_page_break(doc)
 
 # =========================================================
-# ЗМІСТ  (page 2)
+# ЗМІСТ  (page 2 — number shown)
 # =========================================================
 add_heading(doc, 'ЗМІСТ')
 
 contents = [
     ('ВСТУП', '3', True),
-    ('РОЗДІЛ 1. ТЕОРЕТИЧНИЙ АНАЛІЗ ПРОБЛЕМИ ПРЕВЕНЦІЇ МОВЛЕННЄВИХ ПОРУШЕНЬ У ДІТЕЙ В УМОВАХ НЕВИЗНАЧЕНОСТІ', '7', True),
+    ('РОЗДІЛ 1. ТЕОРЕТИЧНИЙ АНАЛІЗ ПРОБЛЕМИ ПРЕВЕНЦІЇ МОВЛЕННЄВИХ ПОРУШЕНЬ '
+     'У ДІТЕЙ В УМОВАХ НЕВИЗНАЧЕНОСТІ', '7', True),
     ('1.1. Психолінгвістичні особливості мовленнєвого розвитку старших дошкільників', '7', False),
     ('1.2. Феномен «екстремальної невизначеності» та його вплив на когнітивну сферу дитини', '14', False),
     ('1.3. Наукові підходи до превенції труднощів мовлення в сучасній логопсихології', '21', False),
@@ -121,13 +164,12 @@ contents = [
 for title, page, bold in contents:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(3)
-    p.paragraph_format.line_spacing = Pt(21)
+    p.paragraph_format.space_before      = Pt(0)
+    p.paragraph_format.space_after       = Pt(3)
     p.paragraph_format.first_line_indent = Pt(0)
+    _set_spacing_15(p)
     add_run(p, title, bold=bold)
-    dots = ' ' + '.' * max(4, 65 - len(title)) + ' ' + page
-    add_run(p, dots, bold=False)
+    add_run(p, ' ' + '.' * max(4, 65 - len(title)) + ' ' + page)
 
 add_page_break(doc)
 
@@ -136,14 +178,13 @@ add_page_break(doc)
 # =========================================================
 add_heading(doc, 'ВСТУП')
 
-# --- Актуальність ---
 p = new_para(doc)
 add_run(p, 'Актуальність дослідження.', bold=True)
 add_run(p,
-    ' Проблема мовленнєвого розвитку дітей дошкільного віку завжди перебувала в центрі уваги педагогічної науки '
-    'та практики. Однак в умовах повномасштабного збройного вторгнення Російської Федерації в Україну, що '
-    'розпочалося 24 лютого 2022 року, ця проблема набула принципово нових, вкрай гострих ознак, що зумовлює '
-    'нагальну потребу в її переосмисленні та розробці ефективних превентивних стратегій.')
+    ' Проблема мовленнєвого розвитку дітей дошкільного віку завжди перебувала в центрі уваги педагогічної '
+    'науки та практики. Однак в умовах повномасштабного збройного вторгнення Російської Федерації в Україну, '
+    'що розпочалося 24 лютого 2022 року, ця проблема набула принципово нових, вкрай гострих ознак, що '
+    'зумовлює нагальну потребу в її переосмисленні та розробці ефективних превентивних стратегій.')
 
 p = new_para(doc)
 add_run(p,
@@ -151,13 +192,12 @@ add_run(p,
     'мовленнєвого розвитку дітей. Закон України «Про дошкільну освіту» (2001, зі змінами 2024 р.) '
     'визначає дошкільну освіту як самостійний пріоритетний рівень системи безперервної освіти, '
     'підкреслюючи важливість всебічного розвитку особистості дитини [6]. Базовий компонент дошкільної '
-    'освіти закріплює мовленнєву компетентність як одну з ключових для успішної соціалізації '
-    'дошкільника. Лист Міністерства освіти і науки України № 1/3737-22 «Про забезпечення '
-    'психологічного супроводу учасників освітнього процесу в умовах воєнного стану» наголошує на '
-    'критичній потребі в психологічній підтримці дітей, зокрема в подоланні наслідків травматичного '
-    'стресу, що безпосередньо позначається на мовленнєвій діяльності [14]. Стратегія розвитку '
-    'дошкільної освіти до 2030 року також акцентує на необхідності модернізації підходів до '
-    'мовленнєвого виховання з урахуванням сучасних викликів [29].')
+    'освіти закріплює мовленнєву компетентність як одну з ключових для успішної соціалізації дошкільника. '
+    'Лист Міністерства освіти і науки України № 1/3737-22 «Про забезпечення психологічного супроводу '
+    'учасників освітнього процесу в умовах воєнного стану» наголошує на критичній потребі в психологічній '
+    'підтримці дітей, зокрема в подоланні наслідків травматичного стресу, що безпосередньо позначається '
+    'на мовленнєвій діяльності [14]. Стратегія розвитку дошкільної освіти до 2030 року акцентує на '
+    'необхідності модернізації підходів до мовленнєвого виховання з урахуванням сучасних викликів [29].')
 
 p = new_para(doc)
 add_run(p,
@@ -172,7 +212,6 @@ add_run(p,
     'в ефективній превенції мовленнєвих труднощів у дошкільників в умовах війни та недостатньою '
     'розробленістю теоретико-методичних засад такої роботи.')
 
-# --- Ступінь дослідженості ---
 p = new_para(doc, space_before=6)
 add_run(p, 'Ступінь дослідженості проблеми.', bold=True)
 add_run(p,
@@ -186,19 +225,15 @@ add_run(p,
     'мовленнєвих труднощів у старших дошкільників в умовах екстремальної невизначеності воєнного '
     'часу, у вітчизняній науці ще не проводилося.')
 
-# --- Об'єкт ---
 p = new_para(doc, space_before=6)
 add_run(p, 'Об\'єкт дослідження', bold=True)
 add_run(p, ' – процес мовленнєвого розвитку дітей старшого дошкільного віку в умовах екстремальної невизначеності.')
 
-# --- Предмет ---
 p = new_para(doc)
 add_run(p, 'Предмет дослідження', bold=True)
-add_run(p,
-    ' – система превентивних засобів і методів запобігання труднощам мовлення '
-    'у старших дошкільників в умовах воєнного стану.')
+add_run(p, ' – система превентивних засобів і методів запобігання труднощам мовлення '
+           'у старших дошкільників в умовах воєнного стану.')
 
-# --- Мета ---
 p = new_para(doc)
 add_run(p, 'Мета дослідження', bold=True)
 add_run(p,
@@ -206,43 +241,36 @@ add_run(p,
     'старшого дошкільного віку в умовах екстремальної невизначеності, спрямованої на попередження '
     'виникнення та поглиблення мовленнєвих порушень.')
 
-# --- Завдання ---
 p = new_para(doc, space_before=6)
 add_run(p, 'Завдання дослідження:', bold=True)
 
-tasks = [
+for i, task in enumerate([
     'проаналізувати психолінгвістичні особливості мовленнєвого розвитку дітей старшого дошкільного віку в нормі;',
     'розкрити феномен «екстремальної невизначеності» та його вплив на когнітивну і мовленнєву сфери дитини;',
     'систематизувати наукові підходи до превенції мовленнєвих труднощів у сучасній логопсихології;',
     'обґрунтувати систему моніторингу мовленнєвих та немовленнєвих процесів у дітей у кризових ситуаціях;',
     'розробити комплекс ігрових та арт-терапевтичних методів запобігання мовленнєвим труднощам у старших дошкільників;',
     'визначити модель співпраці закладу дошкільної освіти з батьками в умовах невизначеності.',
-]
-for i, task in enumerate(tasks, 1):
+], 1):
     p = new_para(doc, space_before=0, space_after=3)
     add_run(p, f'{i}) {task}')
 
-# --- Методи ---
 p = new_para(doc, space_before=6)
 add_run(p, 'Методи дослідження: ', bold=True)
 add_run(p,
     'теоретичні – аналіз, синтез, узагальнення та систематизація наукової літератури з проблеми '
     'дослідження; порівняльний аналіз вітчизняних і зарубіжних підходів до превенції мовленнєвих '
     'порушень; моделювання системи превентивної роботи; '
-    'емпіричні – спостереження за мовленнєвою діяльністю дітей, аналіз документації '
-    'закладів дошкільної освіти, вивчення та узагальнення педагогічного досвіду роботи '
-    'в умовах воєнного стану.')
+    'емпіричні – спостереження за мовленнєвою діяльністю дітей, аналіз документації закладів '
+    'дошкільної освіти, вивчення та узагальнення педагогічного досвіду роботи в умовах воєнного стану.')
 
-# --- Апробація ---
 p = new_para(doc)
 add_run(p, 'Апробація дослідження. ', bold=True)
 add_run(p,
-    'Основні положення та результати дослідження були представлені на студентській '
-    'науково-практичній конференції «Сучасні виклики логопсихології та спеціальної педагогіки» '
-    '(Хмельницька гуманітарно-педагогічна академія, 2025) та обговорювалися на засіданні кафедри '
-    'педагогіки та психології академії.')
+    'Основні положення та результати дослідження були представлені на студентській науково-практичній '
+    'конференції «Сучасні виклики логопсихології та спеціальної педагогіки» (Хмельницька гуманітарно-'
+    'педагогічна академія, 2025) та обговорювалися на засіданні кафедри педагогіки та психології академії.')
 
-# --- Структура ---
 p = new_para(doc)
 add_run(p, 'Структура роботи. ', bold=True)
 add_run(p,
